@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pokémon Draft Board</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Pokémon Draft Board</h1>
+      <p>100 Punkte pro Trainer · vollständig lokal</p>
+    </div>
+
+    <div class="controls">
+      <label>
+        Trainer
+        <select id="playerCount">
+          <option>4</option>
+          <option>5</option>
+          <option>6</option>
+          <option>7</option>
+          <option>8</option>
+        </select>
+      </label>
+      <button id="resetBtn" class="danger">Draft zurücksetzen</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="board-wrap">
+      <div class="section-head">
+        <div>
+          <h2>Draft Board</h2>
+          <span id="availableCount"></span>
+        </div>
+        <input id="searchInput" type="search" placeholder="Pokémon suchen…">
+      </div>
+      <div id="board" class="board"></div>
+    </section>
+
+    <section class="teams-wrap">
+      <div class="section-head">
+        <div>
+          <h2>Trainer</h2>
+          <span>Pokémon auf einen Trainer ziehen · zurück aufs Board = Pick entfernen</span>
+        </div>
+      </div>
+      <div id="teams" class="teams"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
