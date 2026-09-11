@@ -432,11 +432,15 @@ input:disabled {
   position: fixed;
   inset: 0;
   z-index: 100;
-  display: grid;
+  display: none;
   place-items: center;
   padding: 20px;
   background: rgba(5, 8, 12, .78);
   backdrop-filter: blur(6px);
+}
+
+.lobby-overlay.is-open {
+  display: grid;
 }
 
 .lobby-card {

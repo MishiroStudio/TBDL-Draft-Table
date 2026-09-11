@@ -1824,7 +1824,7 @@ async function createOnlineRoom() {
 
       if (!error && data?.length) {
         await enterRoom(data[0]);
-        lobbyOverlay.hidden = true;
+        closeLobby();
         showToast(`Raum ${data[0].code} erstellt.`);
         return;
       }
@@ -1855,7 +1855,7 @@ async function joinOnlineRoom(codeValue) {
     if (!data?.length) throw new Error("Raum nicht gefunden.");
 
     await enterRoom(data[0]);
-    lobbyOverlay.hidden = true;
+    closeLobby();
     showToast(`Raum ${data[0].code} beigetreten.`);
   } catch (error) {
     const raw = String(error?.message || "");
@@ -2100,13 +2100,21 @@ function updateModeUi() {
   }
 }
 
+function closeLobby() {
+  lobbyOverlay.classList.remove("is-open");
+}
+
 function openLobby() {
   setupWarning.hidden = SUPABASE_READY;
   createRoomBtn.disabled = !SUPABASE_READY;
   joinRoomBtn.disabled = !SUPABASE_READY;
   createPlayerCount.value = playerCount.value;
-  lobbyOverlay.hidden = false;
-  if (!SUPABASE_READY) setupWarning.hidden = false;
+
+  lobbyOverlay.classList.add("is-open");
+
+  if (!SUPABASE_READY) {
+    setupWarning.hidden = false;
+  }
 }
 
 async function copyRoomLink() {
@@ -2169,8 +2177,8 @@ resetBtn.addEventListener("click", async () => {
 });
 
 onlineBtn.addEventListener("click", openLobby);
-closeLobbyBtn.addEventListener("click", () => { lobbyOverlay.hidden = true; });
-localModeBtn.addEventListener("click", () => { lobbyOverlay.hidden = true; });
+closeLobbyBtn.addEventListener("click", closeLobby);
+localModeBtn.addEventListener("click", closeLobby);
 createRoomBtn.addEventListener("click", createOnlineRoom);
 joinRoomBtn.addEventListener("click", () => joinOnlineRoom(joinRoomCode.value));
 copyRoomBtn.addEventListener("click", copyRoomLink);
