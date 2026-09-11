@@ -1378,6 +1378,9 @@ let currentUserId = null;
 let realtimeChannel = null;
 let onlineBusy = false;
 
+const TOUCH_MODE = window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+let touchSelectedPokemon = null;
+
 const board = document.getElementById("board");
 const teams = document.getElementById("teams");
 const playerCount = document.getElementById("playerCount");
@@ -1386,6 +1389,10 @@ const onlineBtn = document.getElementById("onlineBtn");
 const searchInput = document.getElementById("searchInput");
 const availableCount = document.getElementById("availableCount");
 const toast = document.getElementById("toast");
+const touchActionBar = document.getElementById("touchActionBar");
+const touchSelectedName = document.getElementById("touchSelectedName");
+const touchReturnBtn = document.getElementById("touchReturnBtn");
+const touchCancelBtn = document.getElementById("touchCancelBtn");
 const modeSubtitle = document.getElementById("modeSubtitle");
 
 const roomStatus = document.getElementById("roomStatus");
@@ -1562,6 +1569,47 @@ function createSprite(name) {
   return box;
 }
 
+function updateTouchSelectionUi() {
+  const hasSelection = TOUCH_MODE && Boolean(touchSelectedPokemon);
+  document.body.classList.toggle("touch-selecting", hasSelection);
+
+  document.querySelectorAll(".pokemon-card").forEach(card => {
+    card.classList.toggle(
+      "touch-selected",
+      hasSelection && card.dataset.name === touchSelectedPokemon
+    );
+  });
+
+  document.querySelectorAll(".team").forEach(team => {
+    team.classList.toggle("touch-target", hasSelection);
+  });
+
+  if (!hasSelection) {
+    touchActionBar.hidden = true;
+    touchSelectedName.textContent = "";
+    touchReturnBtn.hidden = true;
+    return;
+  }
+
+  const pokemon = POKEMON.find(p => p.name === touchSelectedPokemon);
+  touchSelectedName.textContent = pokemon
+    ? `${pokemon.name} · ${pokemon.points} P`
+    : touchSelectedPokemon;
+  touchReturnBtn.hidden = state.drafted[touchSelectedPokemon] === undefined;
+  touchActionBar.hidden = false;
+}
+
+function clearTouchSelection() {
+  touchSelectedPokemon = null;
+  updateTouchSelectionUi();
+}
+
+function toggleTouchSelection(name) {
+  if (!TOUCH_MODE || onlineBusy) return;
+  touchSelectedPokemon = touchSelectedPokemon === name ? null : name;
+  updateTouchSelectionUi();
+}
+
 function createPokemonCard(pokemon) {
   const card = document.createElement("div");
   card.className = "pokemon-card";
@@ -1594,6 +1642,16 @@ function createPokemonCard(pokemon) {
     document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
     card.classList.remove("dragging");
   });
+
+  card.addEventListener("click", event => {
+    if (!TOUCH_MODE || onlineBusy) return;
+    event.stopPropagation();
+    toggleTouchSelection(pokemon.name);
+  });
+
+  if (TOUCH_MODE && touchSelectedPokemon === pokemon.name) {
+    card.classList.add("touch-selected");
+  }
 
   return card;
 }
@@ -1688,7 +1746,7 @@ function renderTeams() {
     if (!picks.length) {
       const empty = document.createElement("div");
       empty.className = "empty-team";
-      empty.textContent = "Pokémon hierher ziehen";
+      empty.textContent = TOUCH_MODE ? "Trainer antippen" : "Pokémon hierher ziehen";
       list.appendChild(empty);
     } else {
       picks
@@ -1709,6 +1767,15 @@ function renderTeams() {
       team.classList.remove("drag-over");
       if (!draggedPokemon || onlineBusy) return;
       await draftPokemon(draggedPokemon, i);
+    });
+
+    team.addEventListener("click", async event => {
+      if (!TOUCH_MODE || !touchSelectedPokemon || onlineBusy) return;
+      if (event.target.closest(".pokemon-card, input, button")) return;
+
+      const selected = touchSelectedPokemon;
+      clearTouchSelection();
+      await draftPokemon(selected, i);
     });
 
     team.append(head, list);
@@ -1764,6 +1831,7 @@ function renderAll() {
   renderBoard();
   renderTeams();
   updateModeUi();
+  updateTouchSelectionUi();
 }
 
 function showToast(message) {
@@ -2059,6 +2127,7 @@ async function resetOnlineDraft() {
 }
 
 function leaveOnlineRoom() {
+  clearTouchSelection();
   if (realtimeChannel && supabaseClient) {
     supabaseClient.removeChannel(realtimeChannel);
     realtimeChannel = null;
@@ -2175,6 +2244,15 @@ resetBtn.addEventListener("click", async () => {
   saveState();
   renderAll();
 });
+
+touchReturnBtn.addEventListener("click", async () => {
+  if (!touchSelectedPokemon || onlineBusy) return;
+  const selected = touchSelectedPokemon;
+  clearTouchSelection();
+  await returnToBoard(selected);
+});
+
+touchCancelBtn.addEventListener("click", clearTouchSelection);
 
 onlineBtn.addEventListener("click", openLobby);
 closeLobbyBtn.addEventListener("click", closeLobby);

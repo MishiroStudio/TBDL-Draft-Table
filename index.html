@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pokémon Draft Board</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <header class="topbar">
@@ -50,7 +50,7 @@
       <div class="section-head">
         <div>
           <h2>Trainer</h2>
-          <span>Pokémon auf einen Trainer ziehen · zurück aufs Board = Pick entfernen</span>
+          <span>Desktop: Pokémon ziehen · Handy: Pokémon antippen → Trainer antippen</span>
         </div>
       </div>
       <div id="teams" class="teams"></div>
@@ -58,6 +58,15 @@
   </main>
 
   <div id="toast" class="toast" aria-live="polite"></div>
+
+  <div id="touchActionBar" class="touch-action-bar" hidden>
+    <div class="touch-selection-text">
+      <strong id="touchSelectedName"></strong>
+      <span>Trainer antippen</span>
+    </div>
+    <button id="touchReturnBtn" type="button" hidden>↩ Board</button>
+    <button id="touchCancelBtn" class="touch-cancel-btn" type="button" aria-label="Auswahl aufheben">×</button>
+  </div>
 
   <div id="lobbyOverlay" class="lobby-overlay">
     <div class="lobby-card">
@@ -104,7 +113,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=5"></script>
-  <script src="script.js?v=5"></script>
+  <script src="config.js?v=6"></script>
+  <script src="script.js?v=6"></script>
 </body>
 </html>
