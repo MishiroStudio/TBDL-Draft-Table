@@ -1357,10 +1357,13 @@ const POKEMON = [
   }
 ];
 
+
 const MAX_BUDGET = 100;
+const MAX_PICKS = 10;
 const MIN_PLAYERS = 4;
 const MAX_PLAYERS = 8;
-const STORAGE_KEY = "pokemon-draft-board-v2-current-csv";
+const STORAGE_KEY = "pokemon-draft-board-v3-live";
+const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 let state = {
   playerCount: 4,
@@ -1369,14 +1372,45 @@ let state = {
 };
 
 let draggedPokemon = null;
+let onlineMode = false;
+let currentRoom = null;
+let currentUserId = null;
+let realtimeChannel = null;
+let onlineBusy = false;
 
 const board = document.getElementById("board");
 const teams = document.getElementById("teams");
 const playerCount = document.getElementById("playerCount");
 const resetBtn = document.getElementById("resetBtn");
+const onlineBtn = document.getElementById("onlineBtn");
 const searchInput = document.getElementById("searchInput");
 const availableCount = document.getElementById("availableCount");
 const toast = document.getElementById("toast");
+const modeSubtitle = document.getElementById("modeSubtitle");
+
+const roomStatus = document.getElementById("roomStatus");
+const roomBadge = document.getElementById("roomBadge");
+const copyRoomBtn = document.getElementById("copyRoomBtn");
+const leaveRoomBtn = document.getElementById("leaveRoomBtn");
+
+const lobbyOverlay = document.getElementById("lobbyOverlay");
+const closeLobbyBtn = document.getElementById("closeLobbyBtn");
+const localModeBtn = document.getElementById("localModeBtn");
+const createPlayerCount = document.getElementById("createPlayerCount");
+const createRoomBtn = document.getElementById("createRoomBtn");
+const joinRoomCode = document.getElementById("joinRoomCode");
+const joinRoomBtn = document.getElementById("joinRoomBtn");
+const setupWarning = document.getElementById("setupWarning");
+
+const config = window.DRAFT_CONFIG || {};
+const SUPABASE_READY = Boolean(
+  config.supabaseUrl &&
+  config.supabasePublishableKey &&
+  window.supabase?.createClient
+);
+const supabaseClient = SUPABASE_READY
+  ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey)
+  : null;
 
 function loadState() {
   try {
@@ -1397,7 +1431,6 @@ function loadState() {
     }
 
     if (saved.drafted && typeof saved.drafted === "object") {
-      // Ignore saved Pokémon that are no longer present in the current CSV.
       const validNames = new Set(POKEMON.map(p => p.name));
       for (const [name, owner] of Object.entries(saved.drafted)) {
         if (validNames.has(name)) state.drafted[name] = owner;
@@ -1407,6 +1440,7 @@ function loadState() {
 }
 
 function saveState() {
+  if (onlineMode) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -1445,19 +1479,13 @@ function spriteCandidates(name) {
   const slug = slugify(name);
   const candidates = [];
 
-  // Cordy's Lab uses the concrete PokéAPI/form ID as the sprite filename.
-  // Draft entries sometimes intentionally combine those forms under one name.
   for (const alias of SPRITE_ALIASES[name] || []) {
     candidates.push(`sprites/${alias}.png`);
     candidates.push(`sprites/${alias}.webp`);
   }
 
-  candidates.push(
-    `sprites/${slug}.png`,
-    `sprites/${slug}.webp`
-  );
+  candidates.push(`sprites/${slug}.png`, `sprites/${slug}.webp`);
 
-  // Mega X / Y / Z and ordinary Mega naming variants.
   if (slug.startsWith("mega-")) {
     const rest = slug.slice(5);
     candidates.push(`sprites/${rest}-mega.png`);
@@ -1471,7 +1499,6 @@ function spriteCandidates(name) {
     }
   }
 
-  // Regional form variants.
   if (slug.startsWith("alolan-")) {
     const rest = slug.slice(7);
     candidates.push(`sprites/${rest}-alola.png`);
@@ -1496,11 +1523,9 @@ function spriteCandidates(name) {
     candidates.push(`sprites/${rest}-paldean.png`);
   }
 
-  // Common male/female/form naming.
   candidates.push(`sprites/${slug.replace("-male", "-m")}.png`);
   candidates.push(`sprites/${slug.replace("-female", "-f")}.png`);
 
-  // Showdown/PokeAPI-style compact IDs.
   const compact = slug.replace(/-/g, "");
   candidates.push(`sprites/${compact}.png`);
   candidates.push(`sprites/${compact}.webp`);
@@ -1528,28 +1553,25 @@ function createSprite(name) {
       box.appendChild(fallback);
       return;
     }
-
     img.src = candidates[index++];
   };
 
   img.addEventListener("error", tryNext);
   box.appendChild(img);
   tryNext();
-
   return box;
 }
 
 function createPokemonCard(pokemon) {
   const card = document.createElement("div");
   card.className = "pokemon-card";
-  card.draggable = true;
+  card.draggable = !onlineBusy;
   card.dataset.name = pokemon.name;
   card.dataset.points = pokemon.points;
 
   card.appendChild(createSprite(pokemon.name));
 
   const text = document.createElement("div");
-
   const name = document.createElement("div");
   name.className = "pokemon-name";
   name.textContent = pokemon.name;
@@ -1562,15 +1584,14 @@ function createPokemonCard(pokemon) {
   card.appendChild(text);
 
   card.addEventListener("dragstart", () => {
+    if (onlineBusy) return;
     draggedPokemon = pokemon.name;
     card.classList.add("dragging");
   });
 
   card.addEventListener("dragend", () => {
     draggedPokemon = null;
-    document
-      .querySelectorAll(".drag-over")
-      .forEach(el => el.classList.remove("drag-over"));
+    document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
     card.classList.remove("dragging");
   });
 
@@ -1592,30 +1613,19 @@ function renderBoard() {
     const list = document.createElement("div");
     list.className = "point-list";
 
-    POKEMON
-      .filter(p => p.points === points)
-      .forEach(p => {
-        if (state.drafted[p.name] !== undefined) return;
-
-        const card = createPokemonCard(p);
-
-        if (query && !p.name.toLowerCase().includes(query)) {
-          card.hidden = true;
-        }
-
-        list.appendChild(card);
-      });
+    POKEMON.filter(p => p.points === points).forEach(p => {
+      if (state.drafted[p.name] !== undefined) return;
+      const card = createPokemonCard(p);
+      if (query && !p.name.toLowerCase().includes(query)) card.hidden = true;
+      list.appendChild(card);
+    });
 
     column.append(head, list);
     board.appendChild(column);
   }
 
-  const available = POKEMON.filter(
-    p => state.drafted[p.name] === undefined
-  ).length;
-
-  availableCount.textContent =
-    `${available} von ${POKEMON.length} verfügbar`;
+  const available = POKEMON.filter(p => state.drafted[p.name] === undefined).length;
+  availableCount.textContent = `${available} von ${POKEMON.length} verfügbar`;
 }
 
 function budgetFor(playerIndex) {
@@ -1625,9 +1635,7 @@ function budgetFor(playerIndex) {
 }
 
 function picksFor(playerIndex) {
-  return POKEMON.filter(
-    p => Number(state.drafted[p.name]) === playerIndex
-  );
+  return POKEMON.filter(p => Number(state.drafted[p.name]) === playerIndex);
 }
 
 function renderTeams() {
@@ -1645,30 +1653,31 @@ function renderTeams() {
     nameInput.className = "team-name";
     nameInput.value = state.trainerNames[i];
 
-    nameInput.addEventListener("change", () => {
-      state.trainerNames[i] =
-        nameInput.value.trim() || `Trainer ${i + 1}`;
-      nameInput.value = state.trainerNames[i];
-      saveState();
+    nameInput.addEventListener("change", async () => {
+      const value = nameInput.value.trim() || `Trainer ${i + 1}`;
+      state.trainerNames[i] = value;
+      nameInput.value = value;
+
+      if (onlineMode) {
+        await syncTrainerNames();
+      } else {
+        saveState();
+      }
     });
 
     const meta = document.createElement("div");
     meta.className = "team-meta";
-
     const picks = picksFor(i);
     const budget = budgetFor(i);
 
     const pickCount = document.createElement("span");
-    pickCount.textContent = `${picks.length} Picks`;
+    pickCount.textContent = `${picks.length} / ${MAX_PICKS} Picks`;
 
     const budgetEl = document.createElement("span");
     budgetEl.className = "team-budget";
-
     if (budget <= 15) budgetEl.classList.add("low");
     if (budget < 0) budgetEl.classList.add("over");
-
-    budgetEl.innerHTML =
-      `<strong>${budget}</strong> / ${MAX_BUDGET} Punkte`;
+    budgetEl.innerHTML = `<strong>${budget}</strong> / ${MAX_BUDGET} Punkte`;
 
     meta.append(pickCount, budgetEl);
     head.append(nameInput, meta);
@@ -1683,28 +1692,23 @@ function renderTeams() {
       list.appendChild(empty);
     } else {
       picks
-        .sort((a, b) =>
-          b.points - a.points || a.name.localeCompare(b.name)
-        )
+        .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name))
         .forEach(p => list.appendChild(createPokemonCard(p)));
     }
 
     team.addEventListener("dragover", e => {
+      if (onlineBusy) return;
       e.preventDefault();
       team.classList.add("drag-over");
     });
 
-    team.addEventListener(
-      "dragleave",
-      () => team.classList.remove("drag-over")
-    );
+    team.addEventListener("dragleave", () => team.classList.remove("drag-over"));
 
-    team.addEventListener("drop", e => {
+    team.addEventListener("drop", async e => {
       e.preventDefault();
       team.classList.remove("drag-over");
-
-      if (!draggedPokemon) return;
-      draftPokemon(draggedPokemon, i);
+      if (!draggedPokemon || onlineBusy) return;
+      await draftPokemon(draggedPokemon, i);
     });
 
     team.append(head, list);
@@ -1712,23 +1716,26 @@ function renderTeams() {
   }
 }
 
-function draftPokemon(name, playerIndex) {
+async function draftPokemon(name, playerIndex) {
   const pokemon = POKEMON.find(p => p.name === name);
   if (!pokemon) return;
 
   const currentOwner = state.drafted[name];
-
   if (Number(currentOwner) === playerIndex) return;
 
-  // When moving between trainers, the receiving trainer must be able
-  // to afford the full value of the incoming Pokémon.
   const availableBudget = budgetFor(playerIndex);
-
   if (availableBudget < pokemon.points) {
-    showToast(
-      `${state.trainerNames[playerIndex]} hat nur noch ` +
-      `${availableBudget} Punkte.`
-    );
+    showToast(`${state.trainerNames[playerIndex]} hat nur noch ${availableBudget} Punkte.`);
+    return;
+  }
+
+  if (picksFor(playerIndex).length >= MAX_PICKS) {
+    showToast(`${state.trainerNames[playerIndex]} hat bereits ${MAX_PICKS} Picks.`);
+    return;
+  }
+
+  if (onlineMode) {
+    await upsertOnlinePick(pokemon, playerIndex);
     return;
   }
 
@@ -1737,8 +1744,13 @@ function draftPokemon(name, playerIndex) {
   renderAll();
 }
 
-function returnToBoard(name) {
+async function returnToBoard(name) {
   if (state.drafted[name] === undefined) return;
+
+  if (onlineMode) {
+    await deleteOnlinePick(name);
+    return;
+  }
 
   delete state.drafted[name];
   saveState();
@@ -1747,42 +1759,389 @@ function returnToBoard(name) {
 
 function renderAll() {
   playerCount.value = String(state.playerCount);
+  createPlayerCount.value = String(state.playerCount);
+  playerCount.disabled = onlineMode;
   renderBoard();
   renderTeams();
+  updateModeUi();
 }
 
 function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
-
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(
-    () => toast.classList.remove("show"),
-    2200
+  showToast.timer = setTimeout(() => toast.classList.remove("show"), 2400);
+}
+
+function setBusy(value) {
+  onlineBusy = value;
+  createRoomBtn.disabled = value || !SUPABASE_READY;
+  joinRoomBtn.disabled = value || !SUPABASE_READY;
+}
+
+function generateRoomCode(length = 6) {
+  let code = "";
+  const random = new Uint32Array(length);
+  crypto.getRandomValues(random);
+  for (const value of random) {
+    code += ROOM_CODE_ALPHABET[value % ROOM_CODE_ALPHABET.length];
+  }
+  return code;
+}
+
+function normalizeRoomCode(value) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+}
+
+async function ensureOnlineUser() {
+  if (!SUPABASE_READY) throw new Error("Supabase ist noch nicht konfiguriert.");
+
+  const { data: sessionData } = await supabaseClient.auth.getSession();
+  if (sessionData.session?.user) {
+    currentUserId = sessionData.session.user.id;
+    return currentUserId;
+  }
+
+  const { data, error } = await supabaseClient.auth.signInAnonymously();
+  if (error) throw error;
+  currentUserId = data.user.id;
+  return currentUserId;
+}
+
+async function createOnlineRoom() {
+  setBusy(true);
+  try {
+    await ensureOnlineUser();
+    const count = Number(createPlayerCount.value);
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = generateRoomCode();
+      const { data, error } = await supabaseClient.rpc("create_draft_room", {
+        p_code: code,
+        p_player_count: count
+      });
+
+      if (!error && data?.length) {
+        await enterRoom(data[0]);
+        lobbyOverlay.hidden = true;
+        showToast(`Raum ${data[0].code} erstellt.`);
+        return;
+      }
+      lastError = error;
+      if (!String(error?.message || "").toLowerCase().includes("duplicate")) break;
+    }
+
+    throw lastError || new Error("Raum konnte nicht erstellt werden.");
+  } catch (error) {
+    showToast(error.message || "Raum konnte nicht erstellt werden.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function joinOnlineRoom(codeValue) {
+  setBusy(true);
+  try {
+    await ensureOnlineUser();
+    const code = normalizeRoomCode(codeValue);
+    if (code.length !== 6) throw new Error("Bitte einen gültigen 6-stelligen Raumcode eingeben.");
+
+    const { data, error } = await supabaseClient.rpc("join_draft_room", {
+      p_code: code
+    });
+
+    if (error) throw error;
+    if (!data?.length) throw new Error("Raum nicht gefunden.");
+
+    await enterRoom(data[0]);
+    lobbyOverlay.hidden = true;
+    showToast(`Raum ${data[0].code} beigetreten.`);
+  } catch (error) {
+    const raw = String(error?.message || "");
+    const message = raw.includes("ROOM_NOT_FOUND")
+      ? "Raum nicht gefunden."
+      : raw || "Beitritt fehlgeschlagen.";
+    showToast(message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function enterRoom(room) {
+  currentRoom = {
+    id: room.id,
+    code: room.code,
+    player_count: Number(room.player_count),
+    trainer_names: Array.isArray(room.trainer_names)
+      ? room.trainer_names
+      : Array.from({ length: MAX_PLAYERS }, (_, i) => `Trainer ${i + 1}`),
+    host_user_id: room.host_user_id
+  };
+
+  onlineMode = true;
+  state.playerCount = currentRoom.player_count;
+  state.trainerNames = Array.from(
+    { length: MAX_PLAYERS },
+    (_, i) => currentRoom.trainer_names[i] || `Trainer ${i + 1}`
   );
+
+  await refreshOnlinePicks();
+  subscribeToRoom();
+  updateRoomQuery(currentRoom.code);
+  renderAll();
+}
+
+async function refreshOnlineRoom() {
+  if (!currentRoom) return;
+
+  const { data, error } = await supabaseClient
+    .from("draft_rooms")
+    .select("id, code, player_count, trainer_names, host_user_id")
+    .eq("id", currentRoom.id)
+    .single();
+
+  if (error) return;
+
+  currentRoom = data;
+  state.playerCount = Number(data.player_count);
+  state.trainerNames = Array.from(
+    { length: MAX_PLAYERS },
+    (_, i) => data.trainer_names?.[i] || `Trainer ${i + 1}`
+  );
+  renderAll();
+}
+
+async function refreshOnlinePicks() {
+  if (!currentRoom) return;
+
+  const { data, error } = await supabaseClient
+    .from("draft_picks")
+    .select("pokemon_name, player_index")
+    .eq("room_id", currentRoom.id);
+
+  if (error) throw error;
+
+  state.drafted = {};
+  for (const pick of data || []) {
+    state.drafted[pick.pokemon_name] = Number(pick.player_index);
+  }
+}
+
+function subscribeToRoom() {
+  if (!currentRoom || !supabaseClient) return;
+
+  if (realtimeChannel) {
+    supabaseClient.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+  }
+
+  realtimeChannel = supabaseClient
+    .channel(`draft-room-${currentRoom.id}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "draft_picks",
+        filter: `room_id=eq.${currentRoom.id}`
+      },
+      async () => {
+        try {
+          await refreshOnlinePicks();
+          renderAll();
+        } catch (_) {}
+      }
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "draft_rooms",
+        filter: `id=eq.${currentRoom.id}`
+      },
+      async () => {
+        await refreshOnlineRoom();
+      }
+    )
+    .subscribe();
+}
+
+async function upsertOnlinePick(pokemon, playerIndex) {
+  if (!currentRoom || onlineBusy) return;
+
+  setBusy(true);
+  try {
+    const { error } = await supabaseClient
+      .from("draft_picks")
+      .upsert(
+        {
+          room_id: currentRoom.id,
+          pokemon_name: pokemon.name,
+          player_index: playerIndex,
+          points: pokemon.points,
+          updated_by: currentUserId
+        },
+        { onConflict: "room_id,pokemon_name" }
+      );
+
+    if (error) throw error;
+    await refreshOnlinePicks();
+    renderAll();
+  } catch (error) {
+    const raw = String(error?.message || "");
+    if (raw.includes("MAX_BUDGET")) {
+      showToast("Der Pick würde das 100-Punkte-Limit überschreiten.");
+    } else if (raw.includes("MAX_PICKS")) {
+      showToast(`Ein Trainer darf maximal ${MAX_PICKS} Pokémon draften.`);
+    } else {
+      showToast(raw || "Pick konnte nicht gespeichert werden.");
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteOnlinePick(name) {
+  if (!currentRoom || onlineBusy) return;
+
+  setBusy(true);
+  try {
+    const { error } = await supabaseClient
+      .from("draft_picks")
+      .delete()
+      .eq("room_id", currentRoom.id)
+      .eq("pokemon_name", name);
+
+    if (error) throw error;
+    await refreshOnlinePicks();
+    renderAll();
+  } catch (error) {
+    showToast(error.message || "Pick konnte nicht entfernt werden.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function syncTrainerNames() {
+  if (!currentRoom) return;
+
+  const names = state.trainerNames.slice(0, state.playerCount);
+  const { error } = await supabaseClient
+    .from("draft_rooms")
+    .update({ trainer_names: names })
+    .eq("id", currentRoom.id);
+
+  if (error) {
+    showToast(error.message || "Trainername konnte nicht gespeichert werden.");
+  }
+}
+
+async function resetOnlineDraft() {
+  if (!currentRoom) return;
+  if (currentRoom.host_user_id !== currentUserId) {
+    showToast("Nur der Host kann den kompletten Draft zurücksetzen.");
+    return;
+  }
+
+  const { error } = await supabaseClient.rpc("reset_draft_room", {
+    p_room_id: currentRoom.id
+  });
+
+  if (error) {
+    showToast(error.message || "Draft konnte nicht zurückgesetzt werden.");
+    return;
+  }
+
+  await refreshOnlinePicks();
+  renderAll();
+}
+
+function leaveOnlineRoom() {
+  if (realtimeChannel && supabaseClient) {
+    supabaseClient.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+  }
+
+  onlineMode = false;
+  currentRoom = null;
+  state = {
+    playerCount: 4,
+    trainerNames: Array.from({ length: MAX_PLAYERS }, (_, i) => `Trainer ${i + 1}`),
+    drafted: {}
+  };
+  loadState();
+  updateRoomQuery(null);
+  renderAll();
+}
+
+function updateRoomQuery(code) {
+  const url = new URL(window.location.href);
+  if (code) url.searchParams.set("room", code);
+  else url.searchParams.delete("room");
+  history.replaceState(null, "", url);
+}
+
+function updateModeUi() {
+  if (onlineMode && currentRoom) {
+    roomStatus.hidden = false;
+    onlineBtn.hidden = true;
+    roomBadge.textContent = `RAUM ${currentRoom.code}`;
+    modeSubtitle.textContent = "100 Punkte pro Trainer · Live-Draft";
+    resetBtn.disabled = currentRoom.host_user_id !== currentUserId;
+    resetBtn.title = resetBtn.disabled ? "Nur der Host kann den kompletten Draft zurücksetzen." : "";
+  } else {
+    roomStatus.hidden = true;
+    onlineBtn.hidden = false;
+    modeSubtitle.textContent = "100 Punkte pro Trainer · lokaler Draft";
+    resetBtn.disabled = false;
+    resetBtn.title = "";
+  }
+}
+
+function openLobby() {
+  setupWarning.hidden = SUPABASE_READY;
+  createRoomBtn.disabled = !SUPABASE_READY;
+  joinRoomBtn.disabled = !SUPABASE_READY;
+  createPlayerCount.value = playerCount.value;
+  lobbyOverlay.hidden = false;
+  if (!SUPABASE_READY) setupWarning.hidden = false;
+}
+
+async function copyRoomLink() {
+  if (!currentRoom) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("room", currentRoom.code);
+
+  try {
+    await navigator.clipboard.writeText(url.toString());
+    showToast("Raum-Link kopiert.");
+  } catch (_) {
+    window.prompt("Diesen Link kopieren:", url.toString());
+  }
 }
 
 board.addEventListener("dragover", e => {
+  if (onlineBusy) return;
   e.preventDefault();
   board.classList.add("drag-over");
 });
 
 board.addEventListener("dragleave", e => {
-  if (!board.contains(e.relatedTarget)) {
-    board.classList.remove("drag-over");
-  }
+  if (!board.contains(e.relatedTarget)) board.classList.remove("drag-over");
 });
 
-board.addEventListener("drop", e => {
+board.addEventListener("drop", async e => {
   e.preventDefault();
   board.classList.remove("drag-over");
-
-  if (draggedPokemon) returnToBoard(draggedPokemon);
+  if (draggedPokemon && !onlineBusy) await returnToBoard(draggedPokemon);
 });
 
 playerCount.addEventListener("change", () => {
-  const next = Number(playerCount.value);
+  if (onlineMode) return;
 
+  const next = Number(playerCount.value);
   if (next < state.playerCount) {
     for (const [name, owner] of Object.entries(state.drafted)) {
       if (Number(owner) >= next) delete state.drafted[name];
@@ -1796,13 +2155,51 @@ playerCount.addEventListener("change", () => {
 
 searchInput.addEventListener("input", renderBoard);
 
-resetBtn.addEventListener("click", () => {
+resetBtn.addEventListener("click", async () => {
   if (!confirm("Den kompletten Draft zurücksetzen?")) return;
+
+  if (onlineMode) {
+    await resetOnlineDraft();
+    return;
+  }
 
   state.drafted = {};
   saveState();
   renderAll();
 });
 
-loadState();
-renderAll();
+onlineBtn.addEventListener("click", openLobby);
+closeLobbyBtn.addEventListener("click", () => { lobbyOverlay.hidden = true; });
+localModeBtn.addEventListener("click", () => { lobbyOverlay.hidden = true; });
+createRoomBtn.addEventListener("click", createOnlineRoom);
+joinRoomBtn.addEventListener("click", () => joinOnlineRoom(joinRoomCode.value));
+copyRoomBtn.addEventListener("click", copyRoomLink);
+leaveRoomBtn.addEventListener("click", leaveOnlineRoom);
+
+joinRoomCode.addEventListener("input", () => {
+  joinRoomCode.value = normalizeRoomCode(joinRoomCode.value);
+});
+
+joinRoomCode.addEventListener("keydown", event => {
+  if (event.key === "Enter") joinOnlineRoom(joinRoomCode.value);
+});
+
+async function boot() {
+  loadState();
+  renderAll();
+
+  const url = new URL(window.location.href);
+  const roomFromUrl = normalizeRoomCode(url.searchParams.get("room") || "");
+
+  if (roomFromUrl) {
+    if (!SUPABASE_READY) {
+      openLobby();
+      showToast("Supabase ist noch nicht konfiguriert.");
+      return;
+    }
+    joinRoomCode.value = roomFromUrl;
+    await joinOnlineRoom(roomFromUrl);
+  }
+}
+
+boot();

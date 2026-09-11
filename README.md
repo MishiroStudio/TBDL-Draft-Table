@@ -1,71 +1,98 @@
-# Pokémon Draft Board
+# Pokémon Draft Board – GitHub Pages + Live Draft
 
-Lokales Draft-Board für 4–8 Trainer mit 100 Draftpunkten pro Trainer.
-
-Diese Version wurde aus der aktuellen Datei `draft-board-points.csv`
-erstellt und enthält 339 Pokémon/Formen.
-
-## Start
-
-1. ZIP entpacken.
-2. Deine vorhandenen Sprites in den Ordner `sprites` kopieren.
-3. `index.html` doppelklicken.
-4. Das Draft-Board läuft direkt lokal im Browser.
-
-Kein Python, Flask, npm oder lokaler Server erforderlich.
+Diese Version kann weiterhin lokal benutzt werden und zusätzlich gemeinsame Live-Drafts über Supabase durchführen.
 
 ## Funktionen
 
-- Punktespalten 20 bis 1
 - 4–8 Trainer
 - 100 Punkte pro Trainer
-- Drag-and-drop vom Board zu Trainern
-- Verschieben zwischen Trainern
-- Zurückziehen aufs Board
-- automatische Budgetprüfung
-- editierbare Trainernamen
-- Pokémon-Suche
-- automatische Speicherung im Browser
-- kompletter Reset
+- maximal 10 Picks pro Trainer
+- Draft-Board mit 2 Pokémon-Spalten pro Punktestufe
+- Teamlisten mit 2 Spalten
+- Trainerbereich dauerhaft unten sichtbar
+- lokale Sprites
+- lokaler Einzelspieler-Modus
+- gemeinsamer Raum mit 6-stelligem Code
+- Live-Synchronisierung aller Picks
+- Trainer-Namen werden live synchronisiert
+- Host kann den gesamten Online-Draft zurücksetzen
+- Raum-Link kann direkt kopiert und geteilt werden
 
-## Sprites
+## 1. Supabase-Projekt erstellen
 
-Die Seite sucht die Bilddateien ausschließlich lokal im Ordner `sprites`.
+1. Auf Supabase ein neues Projekt erstellen.
+2. Im Supabase-Dashboard den **SQL Editor** öffnen.
+3. Den kompletten Inhalt von `supabase_setup.sql` ausführen.
+4. Unter **Authentication → Providers / Sign In** die **Anonymous Sign-Ins** aktivieren.
+5. In den Projekteinstellungen die **Project URL** und den **Publishable Key** kopieren.
 
-Beispiel:
-- `Gholdengo` → `sprites/gholdengo.png`
-- `Mega Salamence` → `sprites/mega-salamence.png`
-- alternativ auch `sprites/salamence-mega.png`
+Wichtig: Nur den Publishable/Public Key verwenden. Niemals den `service_role` Key in die Website eintragen.
 
-PNG und WebP werden unterstützt. Für Mega- und Regionalformen werden mehrere
-übliche Dateinamen automatisch ausprobiert. Wenn ein Sprite nicht gefunden
-wird, bleibt die Karte trotzdem voll funktionsfähig und zeigt `Sprite fehlt`.
+## 2. config.js ausfüllen
 
-## Dateien
+`config.js`:
 
-- `index.html`
-- `style.css`
-- `script.js`
-- `draft-board-points.csv` – deine aktuelle Punkteverteilung
-- `sprites/` – hier deine Sprites einfügen
+```js
+window.DRAFT_CONFIG = {
+  supabaseUrl: "https://DEIN-PROJEKT.supabase.co",
+  supabasePublishableKey: "DEIN_PUBLISHABLE_KEY"
+};
+```
 
+## 3. Sprites
 
-## Sprite-Aliase
+Deine Cordy's-Lab-Sprites in den Ordner `sprites/` kopieren.
 
-Diese Version enthält zusätzliche Zuordnungen für Cordy’s-Lab-Dateinamen,
-u. a. Indeedee-F/M, Maushold, Aegislash, Palafin, Mimikyu, die drei
-Paldea-Tauros, Meowstic/Mega-Meowstic, Squawkabilly, Gourgeist, Pyroar
-und Morpeko. Die Dateien können weiterhin unverändert aus Cordy’s Lab in
-den Ordner `sprites` kopiert werden.
+Für GitHub Pages müssen diese Sprite-Dateien mit ins Repository hochgeladen werden.
 
-## Layout
+## 4. GitHub Pages
 
-Jede Punktestufe zeigt die Pokémon in zwei Spalten. Die Einträge werden zeilenweise von links nach rechts und anschließend von oben nach unten angeordnet.
+Repository-Struktur:
 
+```text
+index.html
+style.css
+script.js
+config.js
+draft-board-points.csv
+supabase_setup.sql
+sprites/
+README.md
+```
 
-## Trainerbereich
+Dann:
 
-- Der Trainerbereich bleibt dauerhaft am unteren Fensterrand sichtbar.
-- Die Pokémon jedes Trainers werden in zwei Spalten angeordnet.
-- Bei vielen Picks scrollt nur die jeweilige Teamliste vertikal.
-- Bei vielen Trainern kann der feste Trainerbereich horizontal gescrollt werden.
+1. GitHub Repository öffnen.
+2. `Settings → Pages`.
+3. `Deploy from a branch`.
+4. Branch `main`.
+5. Ordner `/ (root)`.
+6. Speichern.
+
+Danach ist die Seite normalerweise unter
+
+`https://DEINNAME.github.io/REPOSITORY-NAME/`
+
+erreichbar.
+
+## Gemeinsamen Draft starten
+
+1. Auf `Online-Draft` klicken.
+2. 4–8 Trainer wählen.
+3. `Raum erstellen`.
+4. Den angezeigten Link kopieren und an die anderen schicken.
+5. Andere öffnen den Link oder geben den Raumcode ein.
+6. Alle sehen Picks und Änderungen live.
+
+Der Host ist der Browser, in dem der Raum erstellt wurde. Die anonyme Supabase-Sitzung wird im Browser gespeichert. Wenn der Host seine Browserdaten löscht, verliert dieser Browser seine Host-Identität für bereits erstellte Räume.
+
+## Sicherheit
+
+- Der geheime Supabase-Service-Key wird nicht verwendet.
+- Besucher melden sich automatisch als anonyme Supabase-Benutzer an.
+- Die Datenbank verwendet Row Level Security.
+- Nur Mitglieder eines Raums können dessen Picks sehen oder ändern.
+- Nur der Host kann die Funktion `Draft zurücksetzen` ausführen.
+- Die Datenbank erzwingt 100 Punkte und maximal 10 Picks pro Trainer.
+
+Der normale Drag-and-drop-Betrieb ist absichtlich kollaborativ: jedes Mitglied des Raums kann Picks hinzufügen, verschieben oder einzeln entfernen.

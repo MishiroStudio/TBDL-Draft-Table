@@ -10,7 +10,7 @@
   <header class="topbar">
     <div>
       <h1>Pokémon Draft Board</h1>
-      <p>100 Punkte pro Trainer · vollständig lokal</p>
+      <p id="modeSubtitle">100 Punkte pro Trainer · lokal oder gemeinsam online</p>
     </div>
 
     <div class="controls">
@@ -24,6 +24,12 @@
           <option>8</option>
         </select>
       </label>
+      <div id="roomStatus" class="room-status" hidden>
+        <span id="roomBadge" class="room-badge"></span>
+        <button id="copyRoomBtn" type="button">Link kopieren</button>
+        <button id="leaveRoomBtn" type="button">Raum verlassen</button>
+      </div>
+      <button id="onlineBtn" type="button">Online-Draft</button>
       <button id="resetBtn" class="danger">Draft zurücksetzen</button>
     </div>
   </header>
@@ -53,6 +59,52 @@
 
   <div id="toast" class="toast" aria-live="polite"></div>
 
+  <div id="lobbyOverlay" class="lobby-overlay" hidden>
+    <div class="lobby-card">
+      <div class="lobby-head">
+        <div>
+          <h2>Gemeinsamer Draft</h2>
+          <p>Raum erstellen oder einem bestehenden Raum beitreten.</p>
+        </div>
+        <button id="closeLobbyBtn" class="icon-btn" type="button" aria-label="Schließen">×</button>
+      </div>
+
+      <div id="setupWarning" class="setup-warning" hidden>
+        Supabase ist noch nicht konfiguriert. Trage zuerst URL und Publishable Key in <code>config.js</code> ein.
+      </div>
+
+      <div class="lobby-grid">
+        <section class="lobby-section">
+          <h3>Raum erstellen</h3>
+          <label>
+            Trainer
+            <select id="createPlayerCount">
+              <option>4</option><option>5</option><option>6</option>
+              <option>7</option><option>8</option>
+            </select>
+          </label>
+          <button id="createRoomBtn" class="primary" type="button">Raum erstellen</button>
+        </section>
+
+        <section class="lobby-section">
+          <h3>Raum beitreten</h3>
+          <label>
+            Raumcode
+            <input id="joinRoomCode" maxlength="6" autocomplete="off" placeholder="ABC123">
+          </label>
+          <button id="joinRoomBtn" class="primary" type="button">Beitreten</button>
+        </section>
+      </div>
+
+      <div class="lobby-footer">
+        <button id="localModeBtn" type="button">Nur lokal verwenden</button>
+        <span>Online werden Picks und Teamnamen live synchronisiert.</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
