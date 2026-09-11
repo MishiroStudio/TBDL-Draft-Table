@@ -667,3 +667,14 @@ input:disabled {
     bottom: 408px;
   }
 }
+
+
+/* Robust visibility for JS-controlled elements */
+[hidden] {
+  display: none !important;
+}
+
+/* Mobile selection bar: only show the selected Pokémon and actions. */
+.touch-selection-text {
+  justify-content: center;
+}

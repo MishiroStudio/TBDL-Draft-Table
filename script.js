@@ -1746,7 +1746,7 @@ function renderTeams() {
     if (!picks.length) {
       const empty = document.createElement("div");
       empty.className = "empty-team";
-      empty.textContent = TOUCH_MODE ? "Trainer antippen" : "Pokémon hierher ziehen";
+      empty.textContent = "Team leer";
       list.appendChild(empty);
     } else {
       picks
