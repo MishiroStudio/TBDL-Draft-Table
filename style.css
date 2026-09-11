@@ -548,3 +548,7 @@ input:disabled {
     flex-wrap: wrap;
   }
 }
+
+[hidden] {
+  display: none !important;
+}
