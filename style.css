@@ -1,4 +1,4 @@
-/* TBDL Draft Table v10 */
+/* TBDL Draft Table v11 */
 * { box-sizing: border-box; }
 
 :root {
@@ -750,4 +750,32 @@ body.pointer-dragging .board {
 /* Mobile selection bar: only show the selected Pokémon and actions. */
 .touch-selection-text {
   justify-content: center;
+}
+
+
+/* ---------- Unified pointer drag: mouse + touch + pen ---------- */
+.pokemon-card {
+  -webkit-user-drag: none;
+}
+
+body.pointer-dragging,
+body.pointer-dragging * {
+  cursor: grabbing !important;
+}
+
+body.pointer-dragging .pokemon-card {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.team.drag-over {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+  background: #162033;
+}
+
+.board-wrap.drag-over,
+.board.drag-over {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
 }

@@ -1,4 +1,4 @@
-// TBDL Draft Table v10
+// TBDL Draft Table v11
 const POKEMON = [
   {
     "name": "Mega Charizard Y",
@@ -1736,7 +1736,7 @@ function dropTargetAt(clientX, clientY) {
     return { type: "team", playerIndex: Number(team.dataset.playerIndex), element: team };
   }
 
-  const boardTarget = el.closest(".board");
+  const boardTarget = el.closest(".board, .board-wrap");
   if (boardTarget) return { type: "board", element: boardTarget };
   return null;
 }
@@ -1828,23 +1828,23 @@ function restoreCardAfterPointerDrag(drag) {
   stopPointerAutoScroll(drag);
   drag.ghost?.remove();
   drag.card?.classList.remove("dragging");
-  if (drag.card) drag.card.draggable = drag.originalDraggable;
   document.body.classList.remove("pointer-dragging");
   clearDragHighlights();
 }
 
 function startPointerDrag(event, card, pokemon) {
-  // Mouse keeps using the browser's native HTML5 drag/drop.
-  if (event.pointerType === "mouse" || onlineBusy || event.button > 0 || pointerDrag) return;
+  // Use the same Pointer Events drag implementation for mouse, touch and pen.
+  // Native HTML5 drag/drop is disabled for Pokémon cards to avoid browser-
+  // specific behaviour on desktop.
+  if (onlineBusy || pointerDrag || event.isPrimary === false) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (event.pointerType !== "mouse" && event.button > 0) return;
 
   const rect = card.getBoundingClientRect();
-  const originalDraggable = card.draggable;
-  // Prevent Safari/iPadOS from starting its own native image/text drag while
-  // our pointer-based touch drag is active.
-  card.draggable = false;
 
   pointerDrag = {
     pointerId: event.pointerId,
+    pointerType: event.pointerType || "mouse",
     pokemonName: pokemon.name,
     card,
     startX: event.clientX,
@@ -1858,7 +1858,6 @@ function startPointerDrag(event, card, pokemon) {
     active: false,
     ghost: null,
     target: null,
-    originalDraggable,
     autoScrollRaf: null
   };
 
@@ -1873,7 +1872,8 @@ function movePointerDrag(event) {
 
   const dx = event.clientX - pointerDrag.startX;
   const dy = event.clientY - pointerDrag.startY;
-  if (!pointerDrag.active && Math.hypot(dx, dy) < 9) return;
+  const threshold = pointerDrag.pointerType === "mouse" ? 4 : 9;
+  if (!pointerDrag.active && Math.hypot(dx, dy) < threshold) return;
 
   if (!pointerDrag.active) {
     pointerDrag.active = true;
@@ -1942,7 +1942,7 @@ function cancelPointerDrag(event) {
 function createPokemonCard(pokemon) {
   const card = document.createElement("div");
   card.className = "pokemon-card";
-  card.draggable = !onlineBusy;
+  card.draggable = false;
   card.dataset.name = pokemon.name;
   card.dataset.points = pokemon.points;
 
@@ -1960,25 +1960,7 @@ function createPokemonCard(pokemon) {
   text.append(name, pts);
   card.appendChild(text);
 
-  card.addEventListener("dragstart", event => {
-    if (onlineBusy) {
-      event.preventDefault();
-      return;
-    }
-    draggedPokemon = pokemon.name;
-    card.classList.add("dragging");
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", pokemon.name);
-    }
-  });
-
-  card.addEventListener("dragend", () => {
-    draggedPokemon = null;
-    clearDragHighlights();
-    card.classList.remove("dragging");
-  });
-
+  // Unified pointer drag handles mouse, touch and pen.
   card.addEventListener("pointerdown", event => startPointerDrag(event, card, pokemon));
 
   card.addEventListener("click", async event => {
@@ -2111,22 +2093,6 @@ function renderTeams() {
         .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name))
         .forEach(p => list.appendChild(createPokemonCard(p)));
     }
-
-    team.addEventListener("dragover", e => {
-      if (onlineBusy) return;
-      e.preventDefault();
-      team.classList.add("drag-over");
-    });
-
-    team.addEventListener("dragleave", () => team.classList.remove("drag-over"));
-
-    team.addEventListener("drop", async e => {
-      e.preventDefault();
-      team.classList.remove("drag-over");
-      const name = draggedPokemon || e.dataTransfer?.getData("text/plain");
-      if (!name || onlineBusy) return;
-      await draftPokemon(name, i);
-    });
 
     team.addEventListener("click", async event => {
       if (!TOUCH_MODE || !touchSelectedPokemon || onlineBusy) return;
@@ -2566,14 +2532,6 @@ document.addEventListener("pointermove", movePointerDrag, { passive: false });
 document.addEventListener("pointerup", endPointerDrag, { passive: false });
 document.addEventListener("pointercancel", cancelPointerDrag, { passive: false });
 
-// Native desktop dragging also gets edge scrolling for horizontally hidden teams.
-teams.addEventListener("dragover", event => {
-  autoScrollAt(event.clientX, event.clientY);
-});
-board.addEventListener("dragover", event => {
-  autoScrollAt(event.clientX, event.clientY);
-});
-
 teamsResizeHandle?.addEventListener("pointerdown", startTeamsResize);
 teamsResizeHandle?.addEventListener("pointermove", moveTeamsResize);
 teamsResizeHandle?.addEventListener("pointerup", endTeamsResize);
@@ -2582,23 +2540,6 @@ teamsResizeHandle?.addEventListener("keydown", handleTeamsResizeKey);
 
 window.addEventListener("resize", () => {
   applyTeamsPanelHeight(currentTeamsPanelHeight(), false);
-});
-
-board.addEventListener("dragover", e => {
-  if (onlineBusy) return;
-  e.preventDefault();
-  board.classList.add("drag-over");
-});
-
-board.addEventListener("dragleave", e => {
-  if (!board.contains(e.relatedTarget)) board.classList.remove("drag-over");
-});
-
-board.addEventListener("drop", async e => {
-  e.preventDefault();
-  board.classList.remove("drag-over");
-  const name = draggedPokemon || e.dataTransfer?.getData("text/plain");
-  if (name && !onlineBusy) await returnToBoard(name);
 });
 
 board.addEventListener("click", async event => {
