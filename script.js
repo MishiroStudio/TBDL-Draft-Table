@@ -1,3 +1,4 @@
+// TBDL Draft Table v9
 const POKEMON = [
   {
     "name": "Mega Charizard Y",
@@ -1364,6 +1365,10 @@ const MIN_PLAYERS = 4;
 const MAX_PLAYERS = 8;
 const STORAGE_KEY = "pokemon-draft-board-v3-live";
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const TEAMS_PANEL_HEIGHT_KEY = "tbdl-teams-panel-height-v1";
+const DEFAULT_TEAMS_PANEL_HEIGHT = 330;
+const MIN_TEAMS_PANEL_HEIGHT = 220;
+const MAX_TEAMS_PANEL_HEIGHT = 720;
 
 let state = {
   playerCount: 4,
@@ -1372,6 +1377,9 @@ let state = {
 };
 
 let draggedPokemon = null;
+let pointerDrag = null;
+let suppressTouchClickUntil = 0;
+let teamsResizeState = null;
 let onlineMode = false;
 let currentRoom = null;
 let currentUserId = null;
@@ -1383,6 +1391,8 @@ let touchSelectedPokemon = null;
 
 const board = document.getElementById("board");
 const teams = document.getElementById("teams");
+const teamsWrap = document.getElementById("teamsWrap");
+const teamsResizeHandle = document.getElementById("teamsResizeHandle");
 const playerCount = document.getElementById("playerCount");
 const resetBtn = document.getElementById("resetBtn");
 const onlineBtn = document.getElementById("onlineBtn");
@@ -1418,6 +1428,109 @@ const SUPABASE_READY = Boolean(
 const supabaseClient = SUPABASE_READY
   ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey)
   : null;
+
+function maxTeamsPanelHeight() {
+  return Math.max(
+    MIN_TEAMS_PANEL_HEIGHT,
+    Math.min(MAX_TEAMS_PANEL_HEIGHT, Math.floor(window.innerHeight * 0.78))
+  );
+}
+
+function clampTeamsPanelHeight(value) {
+  return Math.min(
+    maxTeamsPanelHeight(),
+    Math.max(MIN_TEAMS_PANEL_HEIGHT, Math.round(Number(value) || DEFAULT_TEAMS_PANEL_HEIGHT))
+  );
+}
+
+function currentTeamsPanelHeight() {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue("--teams-panel-height")
+    .trim();
+  return clampTeamsPanelHeight(parseFloat(raw) || DEFAULT_TEAMS_PANEL_HEIGHT);
+}
+
+function applyTeamsPanelHeight(value, persist = false) {
+  const height = clampTeamsPanelHeight(value);
+  document.documentElement.style.setProperty("--teams-panel-height", `${height}px`);
+
+  if (teamsResizeHandle) {
+    teamsResizeHandle.setAttribute("aria-valuemin", String(MIN_TEAMS_PANEL_HEIGHT));
+    teamsResizeHandle.setAttribute("aria-valuemax", String(maxTeamsPanelHeight()));
+    teamsResizeHandle.setAttribute("aria-valuenow", String(height));
+  }
+
+  if (persist) {
+    try {
+      localStorage.setItem(TEAMS_PANEL_HEIGHT_KEY, String(height));
+    } catch (_) {}
+  }
+
+  return height;
+}
+
+function loadTeamsPanelHeight() {
+  let saved = DEFAULT_TEAMS_PANEL_HEIGHT;
+  try {
+    const parsed = Number(localStorage.getItem(TEAMS_PANEL_HEIGHT_KEY));
+    if (Number.isFinite(parsed) && parsed > 0) saved = parsed;
+  } catch (_) {}
+  applyTeamsPanelHeight(saved, false);
+}
+
+function startTeamsResize(event) {
+  if (!teamsResizeHandle || event.button > 0) return;
+  event.preventDefault();
+
+  teamsResizeState = {
+    pointerId: event.pointerId,
+    startY: event.clientY,
+    startHeight: currentTeamsPanelHeight()
+  };
+
+  document.body.classList.add("teams-resizing");
+  try { teamsResizeHandle.setPointerCapture(event.pointerId); } catch (_) {}
+}
+
+function moveTeamsResize(event) {
+  if (!teamsResizeState || teamsResizeState.pointerId !== event.pointerId) return;
+  event.preventDefault();
+
+  // The panel is anchored to the bottom: dragging the handle upward increases it.
+  const delta = teamsResizeState.startY - event.clientY;
+  applyTeamsPanelHeight(teamsResizeState.startHeight + delta, false);
+}
+
+function endTeamsResize(event) {
+  if (!teamsResizeState || teamsResizeState.pointerId !== event.pointerId) return;
+
+  try { teamsResizeHandle.releasePointerCapture(event.pointerId); } catch (_) {}
+  teamsResizeState = null;
+  document.body.classList.remove("teams-resizing");
+  applyTeamsPanelHeight(currentTeamsPanelHeight(), true);
+}
+
+function cancelTeamsResize(event) {
+  if (!teamsResizeState || teamsResizeState.pointerId !== event.pointerId) return;
+  teamsResizeState = null;
+  document.body.classList.remove("teams-resizing");
+  applyTeamsPanelHeight(currentTeamsPanelHeight(), true);
+}
+
+function handleTeamsResizeKey(event) {
+  if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+
+  const step = event.shiftKey ? 50 : 20;
+  let next = currentTeamsPanelHeight();
+
+  if (event.key === "ArrowUp") next += step;
+  if (event.key === "ArrowDown") next -= step;
+  if (event.key === "Home") next = MIN_TEAMS_PANEL_HEIGHT;
+  if (event.key === "End") next = maxTeamsPanelHeight();
+
+  applyTeamsPanelHeight(next, true);
+}
 
 function loadState() {
   try {
@@ -1610,6 +1723,121 @@ function toggleTouchSelection(name) {
   updateTouchSelectionUi();
 }
 
+function clearDragHighlights() {
+  document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
+}
+
+function dropTargetAt(clientX, clientY) {
+  const el = document.elementFromPoint(clientX, clientY);
+  if (!el) return null;
+
+  const team = el.closest(".team");
+  if (team) {
+    return { type: "team", playerIndex: Number(team.dataset.playerIndex), element: team };
+  }
+
+  const boardTarget = el.closest(".board");
+  if (boardTarget) return { type: "board", element: boardTarget };
+  return null;
+}
+
+function positionPointerGhost(clientX, clientY) {
+  if (!pointerDrag?.ghost) return;
+  pointerDrag.ghost.style.left = `${clientX - pointerDrag.offsetX}px`;
+  pointerDrag.ghost.style.top = `${clientY - pointerDrag.offsetY}px`;
+}
+
+function updatePointerDropTarget(clientX, clientY) {
+  clearDragHighlights();
+  const target = dropTargetAt(clientX, clientY);
+  if (target?.element) target.element.classList.add("drag-over");
+  if (pointerDrag) pointerDrag.target = target;
+}
+
+function startPointerDrag(event, card, pokemon) {
+  if (event.pointerType === "mouse" || onlineBusy || event.button > 0) return;
+
+  const rect = card.getBoundingClientRect();
+  pointerDrag = {
+    pointerId: event.pointerId,
+    pokemonName: pokemon.name,
+    card,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+    width: rect.width,
+    height: rect.height,
+    active: false,
+    ghost: null,
+    target: null
+  };
+
+  try { card.setPointerCapture(event.pointerId); } catch (_) {}
+}
+
+function movePointerDrag(event) {
+  if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+
+  const dx = event.clientX - pointerDrag.startX;
+  const dy = event.clientY - pointerDrag.startY;
+  if (!pointerDrag.active && Math.hypot(dx, dy) < 8) return;
+
+  if (!pointerDrag.active) {
+    pointerDrag.active = true;
+    const ghost = pointerDrag.card.cloneNode(true);
+    ghost.classList.add("pointer-drag-ghost");
+    ghost.classList.remove("touch-selected");
+    ghost.style.width = `${pointerDrag.width}px`;
+    ghost.style.height = `${pointerDrag.height}px`;
+    document.body.appendChild(ghost);
+    pointerDrag.ghost = ghost;
+    pointerDrag.card.classList.add("dragging");
+    document.body.classList.add("pointer-dragging");
+  }
+
+  event.preventDefault();
+  positionPointerGhost(event.clientX, event.clientY);
+  updatePointerDropTarget(event.clientX, event.clientY);
+}
+
+async function endPointerDrag(event) {
+  if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+
+  const drag = pointerDrag;
+  pointerDrag = null;
+
+  try { drag.card.releasePointerCapture(event.pointerId); } catch (_) {}
+
+  if (!drag.active) return;
+
+  event.preventDefault();
+  suppressTouchClickUntil = Date.now() + 500;
+  drag.ghost?.remove();
+  drag.card.classList.remove("dragging");
+  document.body.classList.remove("pointer-dragging");
+  clearDragHighlights();
+
+  const target = dropTargetAt(event.clientX, event.clientY) || drag.target;
+  if (!target || onlineBusy) return;
+
+  clearTouchSelection();
+  if (target.type === "team") {
+    await draftPokemon(drag.pokemonName, target.playerIndex);
+  } else if (target.type === "board") {
+    await returnToBoard(drag.pokemonName);
+  }
+}
+
+function cancelPointerDrag(event) {
+  if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+  pointerDrag.ghost?.remove();
+  pointerDrag.card?.classList.remove("dragging");
+  document.body.classList.remove("pointer-dragging");
+  clearDragHighlights();
+  pointerDrag = null;
+}
+
 function createPokemonCard(pokemon) {
   const card = document.createElement("div");
   card.className = "pokemon-card";
@@ -1631,20 +1859,52 @@ function createPokemonCard(pokemon) {
   text.append(name, pts);
   card.appendChild(text);
 
-  card.addEventListener("dragstart", () => {
-    if (onlineBusy) return;
+  card.addEventListener("dragstart", event => {
+    if (onlineBusy) {
+      event.preventDefault();
+      return;
+    }
     draggedPokemon = pokemon.name;
     card.classList.add("dragging");
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", pokemon.name);
+    }
   });
 
   card.addEventListener("dragend", () => {
     draggedPokemon = null;
-    document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
+    clearDragHighlights();
     card.classList.remove("dragging");
   });
 
-  card.addEventListener("click", event => {
+  card.addEventListener("pointerdown", event => startPointerDrag(event, card, pokemon));
+  card.addEventListener("pointermove", movePointerDrag);
+  card.addEventListener("pointerup", endPointerDrag);
+  card.addEventListener("pointercancel", cancelPointerDrag);
+
+  card.addEventListener("click", async event => {
     if (!TOUCH_MODE || onlineBusy) return;
+    if (Date.now() < suppressTouchClickUntil) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    // If another Pokémon is already selected, tapping any Pokémon inside a
+    // trainer box moves the selected Pokémon into that trainer box.
+    if (touchSelectedPokemon && touchSelectedPokemon !== pokemon.name) {
+      const targetTeam = card.closest(".team");
+      if (targetTeam) {
+        event.preventDefault();
+        event.stopPropagation();
+        const selected = touchSelectedPokemon;
+        clearTouchSelection();
+        await draftPokemon(selected, Number(targetTeam.dataset.playerIndex));
+        return;
+      }
+    }
+
     event.stopPropagation();
     toggleTouchSelection(pokemon.name);
   });
@@ -1765,14 +2025,17 @@ function renderTeams() {
     team.addEventListener("drop", async e => {
       e.preventDefault();
       team.classList.remove("drag-over");
-      if (!draggedPokemon || onlineBusy) return;
-      await draftPokemon(draggedPokemon, i);
+      const name = draggedPokemon || e.dataTransfer?.getData("text/plain");
+      if (!name || onlineBusy) return;
+      await draftPokemon(name, i);
     });
 
     team.addEventListener("click", async event => {
       if (!TOUCH_MODE || !touchSelectedPokemon || onlineBusy) return;
-      if (event.target.closest(".pokemon-card, input, button")) return;
+      if (event.target.closest("input, button")) return;
 
+      // The whole trainer box is a target, including areas already occupied
+      // by other Pokémon cards. Card taps are handled above and stop bubbling.
       const selected = touchSelectedPokemon;
       clearTouchSelection();
       await draftPokemon(selected, i);
@@ -2199,6 +2462,16 @@ async function copyRoomLink() {
   }
 }
 
+teamsResizeHandle?.addEventListener("pointerdown", startTeamsResize);
+teamsResizeHandle?.addEventListener("pointermove", moveTeamsResize);
+teamsResizeHandle?.addEventListener("pointerup", endTeamsResize);
+teamsResizeHandle?.addEventListener("pointercancel", cancelTeamsResize);
+teamsResizeHandle?.addEventListener("keydown", handleTeamsResizeKey);
+
+window.addEventListener("resize", () => {
+  applyTeamsPanelHeight(currentTeamsPanelHeight(), false);
+});
+
 board.addEventListener("dragover", e => {
   if (onlineBusy) return;
   e.preventDefault();
@@ -2212,7 +2485,16 @@ board.addEventListener("dragleave", e => {
 board.addEventListener("drop", async e => {
   e.preventDefault();
   board.classList.remove("drag-over");
-  if (draggedPokemon && !onlineBusy) await returnToBoard(draggedPokemon);
+  const name = draggedPokemon || e.dataTransfer?.getData("text/plain");
+  if (name && !onlineBusy) await returnToBoard(name);
+});
+
+board.addEventListener("click", async event => {
+  if (!TOUCH_MODE || !touchSelectedPokemon || onlineBusy) return;
+  if (event.target.closest(".pokemon-card, input, button")) return;
+  const selected = touchSelectedPokemon;
+  clearTouchSelection();
+  await returnToBoard(selected);
 });
 
 playerCount.addEventListener("change", () => {
@@ -2271,6 +2553,7 @@ joinRoomCode.addEventListener("keydown", event => {
 });
 
 async function boot() {
+  loadTeamsPanelHeight();
   loadState();
   renderAll();
 

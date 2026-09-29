@@ -1,10 +1,11 @@
 <!doctype html>
+<!-- TBDL Draft Table v9 -->
 <html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Tommy's Birthday Draft League Table</title>
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
   <header class="topbar">
@@ -46,7 +47,17 @@
       <div id="board" class="board"></div>
     </section>
 
-    <section class="teams-wrap">
+    <section class="teams-wrap" id="teamsWrap">
+      <div
+        id="teamsResizeHandle"
+        class="teams-resize-handle"
+        role="separator"
+        aria-label="Trainerbereich vergrößern oder verkleinern"
+        aria-orientation="horizontal"
+        tabindex="0"
+      >
+        <span class="teams-resize-grip" aria-hidden="true"></span>
+      </div>
       <div class="section-head">
         <div>
           <h2>Trainer</h2>
@@ -111,7 +122,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=7"></script>
-  <script src="script.js?v=7"></script>
+  <script src="config.js?v=9"></script>
+  <script src="script.js?v=9"></script>
 </body>
 </html>
