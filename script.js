@@ -1,4 +1,4 @@
-// TBDL Draft Table v9
+// TBDL Draft Table v10
 const POKEMON = [
   {
     "name": "Mega Charizard Y",
@@ -1754,23 +1754,112 @@ function updatePointerDropTarget(clientX, clientY) {
   if (pointerDrag) pointerDrag.target = target;
 }
 
+function edgeScrollDelta(value, start, end, zone = 62, maxSpeed = 22) {
+  if (value < start || value > end) return 0;
+  if (value < start + zone) {
+    const strength = Math.min(1, (start + zone - value) / zone);
+    return -Math.max(3, Math.round(maxSpeed * strength));
+  }
+  if (value > end - zone) {
+    const strength = Math.min(1, (value - (end - zone)) / zone);
+    return Math.max(3, Math.round(maxSpeed * strength));
+  }
+  return 0;
+}
+
+function autoScrollAt(clientX, clientY) {
+  // The trainer strip is fixed above the board, so it gets priority.
+  const teamsRect = teams.getBoundingClientRect();
+  if (
+    clientY >= teamsRect.top &&
+    clientY <= teamsRect.bottom &&
+    clientX >= teamsRect.left &&
+    clientX <= teamsRect.right
+  ) {
+    const dx = edgeScrollDelta(clientX, teamsRect.left, teamsRect.right, 70, 24);
+    if (dx) teams.scrollLeft += dx;
+
+    const target = document.elementFromPoint(clientX, clientY)?.closest(".team");
+    const list = target?.querySelector(".team-list");
+    if (list) {
+      const listRect = list.getBoundingClientRect();
+      const dy = edgeScrollDelta(clientY, listRect.top, listRect.bottom, 44, 16);
+      if (dy) list.scrollTop += dy;
+    }
+    return;
+  }
+
+  const boardRect = board.getBoundingClientRect();
+  if (
+    clientY >= boardRect.top &&
+    clientY <= boardRect.bottom &&
+    clientX >= boardRect.left &&
+    clientX <= boardRect.right
+  ) {
+    const dx = edgeScrollDelta(clientX, boardRect.left, boardRect.right, 70, 24);
+    if (dx) board.scrollLeft += dx;
+  }
+}
+
+function startPointerAutoScroll() {
+  if (!pointerDrag || pointerDrag.autoScrollRaf) return;
+
+  const tick = () => {
+    if (!pointerDrag?.active) {
+      if (pointerDrag) pointerDrag.autoScrollRaf = null;
+      return;
+    }
+
+    autoScrollAt(pointerDrag.lastX, pointerDrag.lastY);
+    updatePointerDropTarget(pointerDrag.lastX, pointerDrag.lastY);
+    pointerDrag.autoScrollRaf = requestAnimationFrame(tick);
+  };
+
+  pointerDrag.autoScrollRaf = requestAnimationFrame(tick);
+}
+
+function stopPointerAutoScroll(drag) {
+  if (drag?.autoScrollRaf) cancelAnimationFrame(drag.autoScrollRaf);
+  if (drag) drag.autoScrollRaf = null;
+}
+
+function restoreCardAfterPointerDrag(drag) {
+  if (!drag) return;
+  stopPointerAutoScroll(drag);
+  drag.ghost?.remove();
+  drag.card?.classList.remove("dragging");
+  if (drag.card) drag.card.draggable = drag.originalDraggable;
+  document.body.classList.remove("pointer-dragging");
+  clearDragHighlights();
+}
+
 function startPointerDrag(event, card, pokemon) {
-  if (event.pointerType === "mouse" || onlineBusy || event.button > 0) return;
+  // Mouse keeps using the browser's native HTML5 drag/drop.
+  if (event.pointerType === "mouse" || onlineBusy || event.button > 0 || pointerDrag) return;
 
   const rect = card.getBoundingClientRect();
+  const originalDraggable = card.draggable;
+  // Prevent Safari/iPadOS from starting its own native image/text drag while
+  // our pointer-based touch drag is active.
+  card.draggable = false;
+
   pointerDrag = {
     pointerId: event.pointerId,
     pokemonName: pokemon.name,
     card,
     startX: event.clientX,
     startY: event.clientY,
+    lastX: event.clientX,
+    lastY: event.clientY,
     offsetX: event.clientX - rect.left,
     offsetY: event.clientY - rect.top,
     width: rect.width,
     height: rect.height,
     active: false,
     ghost: null,
-    target: null
+    target: null,
+    originalDraggable,
+    autoScrollRaf: null
   };
 
   try { card.setPointerCapture(event.pointerId); } catch (_) {}
@@ -1779,25 +1868,31 @@ function startPointerDrag(event, card, pokemon) {
 function movePointerDrag(event) {
   if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
 
+  pointerDrag.lastX = event.clientX;
+  pointerDrag.lastY = event.clientY;
+
   const dx = event.clientX - pointerDrag.startX;
   const dy = event.clientY - pointerDrag.startY;
-  if (!pointerDrag.active && Math.hypot(dx, dy) < 8) return;
+  if (!pointerDrag.active && Math.hypot(dx, dy) < 9) return;
 
   if (!pointerDrag.active) {
     pointerDrag.active = true;
     const ghost = pointerDrag.card.cloneNode(true);
     ghost.classList.add("pointer-drag-ghost");
     ghost.classList.remove("touch-selected");
+    ghost.removeAttribute("draggable");
     ghost.style.width = `${pointerDrag.width}px`;
     ghost.style.height = `${pointerDrag.height}px`;
     document.body.appendChild(ghost);
     pointerDrag.ghost = ghost;
     pointerDrag.card.classList.add("dragging");
     document.body.classList.add("pointer-dragging");
+    startPointerAutoScroll();
   }
 
   event.preventDefault();
   positionPointerGhost(event.clientX, event.clientY);
+  autoScrollAt(event.clientX, event.clientY);
   updatePointerDropTarget(event.clientX, event.clientY);
 }
 
@@ -1805,20 +1900,28 @@ async function endPointerDrag(event) {
   if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
 
   const drag = pointerDrag;
-  pointerDrag = null;
+  const wasActive = drag.active;
+  const finalX = Number.isFinite(event.clientX) ? event.clientX : drag.lastX;
+  const finalY = Number.isFinite(event.clientY) ? event.clientY : drag.lastY;
 
   try { drag.card.releasePointerCapture(event.pointerId); } catch (_) {}
 
-  if (!drag.active) return;
+  // Resolve the destination before removing drag state/highlights.
+  const target = wasActive
+    ? (dropTargetAt(finalX, finalY) || drag.target)
+    : null;
+
+  pointerDrag = null;
+  restoreCardAfterPointerDrag(drag);
+
+  if (!wasActive) {
+    // A short tap should continue into the existing tap-to-select fallback.
+    return;
+  }
 
   event.preventDefault();
-  suppressTouchClickUntil = Date.now() + 500;
-  drag.ghost?.remove();
-  drag.card.classList.remove("dragging");
-  document.body.classList.remove("pointer-dragging");
-  clearDragHighlights();
+  suppressTouchClickUntil = Date.now() + 650;
 
-  const target = dropTargetAt(event.clientX, event.clientY) || drag.target;
   if (!target || onlineBusy) return;
 
   clearTouchSelection();
@@ -1831,11 +1934,9 @@ async function endPointerDrag(event) {
 
 function cancelPointerDrag(event) {
   if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
-  pointerDrag.ghost?.remove();
-  pointerDrag.card?.classList.remove("dragging");
-  document.body.classList.remove("pointer-dragging");
-  clearDragHighlights();
+  const drag = pointerDrag;
   pointerDrag = null;
+  restoreCardAfterPointerDrag(drag);
 }
 
 function createPokemonCard(pokemon) {
@@ -1879,9 +1980,6 @@ function createPokemonCard(pokemon) {
   });
 
   card.addEventListener("pointerdown", event => startPointerDrag(event, card, pokemon));
-  card.addEventListener("pointermove", movePointerDrag);
-  card.addEventListener("pointerup", endPointerDrag);
-  card.addEventListener("pointercancel", cancelPointerDrag);
 
   card.addEventListener("click", async event => {
     if (!TOUCH_MODE || onlineBusy) return;
@@ -2461,6 +2559,20 @@ async function copyRoomLink() {
     window.prompt("Diesen Link kopieren:", url.toString());
   }
 }
+
+// Track touch/pen drags at document level. This keeps the drag alive even
+// after the pointer leaves the original Pokémon card or crosses scroll areas.
+document.addEventListener("pointermove", movePointerDrag, { passive: false });
+document.addEventListener("pointerup", endPointerDrag, { passive: false });
+document.addEventListener("pointercancel", cancelPointerDrag, { passive: false });
+
+// Native desktop dragging also gets edge scrolling for horizontally hidden teams.
+teams.addEventListener("dragover", event => {
+  autoScrollAt(event.clientX, event.clientY);
+});
+board.addEventListener("dragover", event => {
+  autoScrollAt(event.clientX, event.clientY);
+});
 
 teamsResizeHandle?.addEventListener("pointerdown", startTeamsResize);
 teamsResizeHandle?.addEventListener("pointermove", moveTeamsResize);

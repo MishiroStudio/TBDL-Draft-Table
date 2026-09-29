@@ -1,4 +1,4 @@
-/* TBDL Draft Table v9 */
+/* TBDL Draft Table v10 */
 * { box-sizing: border-box; }
 
 :root {
@@ -714,18 +714,31 @@ input:disabled {
 }
 
 body.pointer-dragging {
+  cursor: grabbing;
   user-select: none;
   -webkit-user-select: none;
+  overscroll-behavior: none;
+}
+
+body.pointer-dragging .teams,
+body.pointer-dragging .team-list,
+body.pointer-dragging .board {
+  scroll-behavior: auto !important;
 }
 
 @media (hover: none), (pointer: coarse) {
   .pokemon-card {
     touch-action: none;
+    -webkit-user-drag: none;
   }
 
   .team.drag-over,
   .board.drag-over {
     outline-width: 3px;
+  }
+
+  .team.drag-over {
+    background: #182233;
   }
 }
 
